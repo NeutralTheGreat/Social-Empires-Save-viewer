@@ -4,10 +4,11 @@ import json
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget, QPushButton, QLabel, QHBoxLayout, QFileDialog,
-    QMessageBox, QLineEdit, QComboBox
+    QMessageBox, QLineEdit, QComboBox, QSizePolicy
 )
 from PyQt5.QtGui import QPixmap, QIcon
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
+
 
 class FileLoaderThread(QThread):
     file_loaded = pyqtSignal(dict)  # Signal to emit loaded data
@@ -34,7 +35,6 @@ class FileLoaderThread(QThread):
             print(f"Error loading file: {e}")
 
 
-
 class ConfigEditor(QMainWindow):
     def __init__(self, config_path, assets_path):
         super().__init__()
@@ -50,11 +50,13 @@ class ConfigEditor(QMainWindow):
     def init_ui(self):
         """Initialize the UI layout."""
         self.setWindowTitle("Social Empires Save File Debugger")
-        self.setGeometry(100, 100, 1200, 600)
+
+        # Set minimum size and optionally a default starting size
+        self.setMinimumSize(800, 600)  # Minimum size for the window
+        self.resize(1200, 600)  # Optional: Set a default size without forcing it
 
         # Set the window icon
         self.setWindowIcon(QIcon('templates/img/icon.gif'))
-
 
         # Main Layout
         main_layout = QVBoxLayout()  # Main vertical layout
@@ -97,33 +99,60 @@ class ConfigEditor(QMainWindow):
         self.town_selector = QComboBox()
         self.town_selector.currentIndexChanged.connect(self.switch_town)
         top_layout.addWidget(QLabel("Select Town:"))
+        self.search_bar.setFixedWidth(150)  # Set a fixed width (adjust as needed)
         top_layout.addWidget(self.town_selector)
+
+        # Add Player Info Label
+        self.player_info_label = QLabel("No Save File Loaded")  # Default text
+        self.player_info_label.setAlignment(Qt.AlignCenter)
+        self.player_info_label.setStyleSheet("font-size: 14px; font-weight: bold;")
+        top_layout.addWidget(self.player_info_label)
 
         # Add Top Layout to Main Layout
         main_layout.addLayout(top_layout)
 
-        # Middle Section: Table and Image
+        # Middle Section: Table and Stats Panel
         middle_layout = QHBoxLayout()
 
         # Left Section: Table
         left_layout = QVBoxLayout()
 
         # Table for Data Display
-        self.table = QTableWidget()
+        self.table = QTableWidget()  # Initialize the table
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["ID", "Name/Details", "Position/Stats", "Image"])
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.MultiSelection)
-        left_layout.addWidget(self.table)
+        self.set_table_selection_mode()  # Dynamically set the selection mode
+        self.table.itemSelectionChanged.connect(self.update_stats_panel)
+        left_layout.addWidget(self.table)  # Add the table to the layout
 
+        # Add Left Layout to Middle Layout
         middle_layout.addLayout(left_layout, 2)
 
-        # Right Section: Image Display
+        # Right Section: Stats Panel
         right_layout = QVBoxLayout()
-        self.image_label = QLabel("No Image")
-        self.image_label.setFixedSize(250, 250)
-        self.image_label.setAlignment(Qt.AlignCenter)
-        right_layout.addWidget(self.image_label)
+
+        self.add_button = QPushButton("Add Selected Unit/Building")
+        self.add_button.clicked.connect(self.add_item_to_save)
+        right_layout.addWidget(self.add_button)
+
+        # List of Units/Buildings (from Config)
+        self.add_items_list = QTableWidget()
+        self.add_items_list.setColumnCount(2)
+        self.add_items_list.setHorizontalHeaderLabels(["ID", "Name"])
+        self.add_items_list.setSelectionBehavior(QTableWidget.SelectRows)
+        self.add_items_list.setSelectionMode(QTableWidget.SingleSelection)
+
+        right_layout.addWidget(self.add_items_list)
+
+        # Stats Display Area
+        self.stats_widget = QWidget()  # Main widget for stats
+        self.stats_layout = QVBoxLayout(self.stats_widget)  # Layout for stats
+        self.stats_widget.setLayout(self.stats_layout)
+
+        right_layout.addWidget(self.stats_widget)  # Add to the right layout
+
+        # Add Right Layout to Middle Layout
         middle_layout.addLayout(right_layout, 1)
 
         # Add Middle Layout to Main Layout
@@ -133,12 +162,185 @@ class ConfigEditor(QMainWindow):
         container = QWidget()
         container.setLayout(main_layout)
         self.setCentralWidget(container)
-        
 
+    def set_table_selection_mode(self):
+        """Set the table's selection mode based on the current mode."""
+        if self.mode == "config":
+            self.table.setSelectionMode(QTableWidget.SingleSelection)  # Single select for stats
+        elif self.mode == "save":
+            self.table.setSelectionMode(QTableWidget.MultiSelection)  # Multi-select for save mode
 
+    def populate_add_items_list(self):
+        """Populate the right panel with units/buildings from the config, including 90x90 images."""
+        if not self.config_items:
+            QMessageBox.warning(self, "No Config Data", "No config file loaded. Please load a config file first.")
+            return
 
-         
+        self.add_items_list.setRowCount(0)  # Clear the table
+        self.add_items_list.setColumnCount(3)  # Update column count to include images
+        self.add_items_list.setHorizontalHeaderLabels(["ID", "Name", "Image"])
+        self.add_items_list.setColumnWidth(0, 50)  # ID
+        self.add_items_list.setColumnWidth(1, 150)  # Name
+        self.add_items_list.setColumnWidth(2, 90)  # Image
 
+        for item in self.config_items:
+            row = self.add_items_list.rowCount()
+            self.add_items_list.insertRow(row)
+            self.add_items_list.setRowHeight(row, 90)  # Set row height for 90x90 images
+
+            # Add ID
+            self.add_items_list.setItem(row, 0, QTableWidgetItem(str(item.get("id", "N/A"))))
+
+            # Add Name
+            self.add_items_list.setItem(row, 1, QTableWidgetItem(item.get("name", "Unnamed")))
+
+            # Add Image
+            img_name = item.get("img_name", "placeholder")
+            img_path = os.path.join(self.assets_path, f"{img_name}.jpg")
+            image_label = QLabel()
+            if os.path.exists(img_path):
+                pixmap = QPixmap(img_path).scaled(90, 90, Qt.KeepAspectRatio)  # Scale to 90x90
+                image_label.setPixmap(pixmap)
+            else:
+                pixmap = QPixmap(90, 90)  # Create a blank pixmap
+                pixmap.fill(Qt.gray)  # Fill with gray as a placeholder
+                image_label.setPixmap(pixmap)
+                image_label.setAlignment(Qt.AlignCenter)
+
+            self.add_items_list.setCellWidget(row, 2, image_label)
+
+    def toggle_mode(self):
+        """Switch between config and save file views."""
+        self.mode = "save" if self.mode == "config" else "config"
+        self.set_table_selection_mode()
+        self.populate_table()
+
+        if self.mode == "save":
+            self.populate_add_items_list()  # Populate the right panel
+
+    def add_item_to_save(self):
+        """Add the selected unit/building to the save file."""
+        if not self.mode == "save":
+            QMessageBox.warning(self, "Error", "This feature is only available in Save File mode.")
+            return
+
+        selected_row = self.add_items_list.currentRow()
+        if selected_row < 0:
+            QMessageBox.warning(self, "No Selection", "Please select a unit or building to add.")
+            return
+
+        # Get the selected item's data
+        item_id = int(self.add_items_list.item(selected_row, 0).text())
+        item_name = self.add_items_list.item(selected_row, 1).text()
+
+        # Example: Add the item with default attributes to the save file
+        new_item = [item_id, 54, 54, 0, 0, 0, [], {}]
+        self.save_items.append(new_item)
+
+        # Refresh the table
+        self.populate_table()
+        QMessageBox.information(self, "Success", f"Added {item_name} (ID: {item_id}) to the save file.")
+
+    def update_stats_panel(self):
+        """Update the right panel with stats of the most recently selected item."""
+        if self.mode == "save":
+            self.clear_stats_panel()  # Clear the panel if in save file view
+            return
+
+        selected_indexes = self.table.selectionModel().selectedRows()
+        if not selected_indexes:
+            self.clear_stats_panel()  # Clear the panel if no row is selected
+            return
+
+        # Process the last selected row
+        row = selected_indexes[-1].row()
+        item_data = self.config_items[row]
+
+        # Populate stats editor
+        self.clear_stats_panel()  # Clear before populating
+        self.populate_stats_form(item_data)
+
+    def update_stats_panel(self):
+        """Update the right panel with stats of the most recently selected item."""
+        if self.mode == "save":
+            self.clear_stats_panel()  # Clear the panel if in save file view
+            return
+
+        selected_indexes = self.table.selectionModel().selectedRows()
+        if not selected_indexes:
+            self.clear_stats_panel()  # Clear the panel if no row is selected
+            return
+
+        # Process the last selected row
+        row = selected_indexes[-1].row()
+        item_data = self.config_items[row]
+
+        # Populate stats editor
+        self.populate_stats_form(item_data)
+
+    def clear_stats_panel(self):
+        """Clear all widgets and layouts from the stats panel."""
+        while self.stats_layout.count():
+            item = self.stats_layout.takeAt(0)  # Take the first item in the layout
+            if item.widget():
+                # If it's a widget, delete it
+                print(f"Removing widget: {item.widget()}")  # Debug
+                item.widget().deleteLater()
+            elif item.layout():
+                # If it's a layout, clear it recursively
+                print("Removing nested layout")  # Debug
+                self.clear_layout(item.layout())
+
+    def clear_layout(self, layout):
+        """Recursively clear a layout."""
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                print(f"Removing nested widget: {item.widget()}")  # Debug
+                item.widget().deleteLater()
+            elif item.layout():
+                self.clear_layout(item.layout())  # Recursively clear nested layouts
+
+    def populate_stats_form(self, item_data):
+        """Populate the stats form with editable fields."""
+        self.clear_stats_panel()  # Clear previous fields
+
+        # Add fields for each key-value pair
+        for key, value in item_data.items():
+            field_layout = QHBoxLayout()
+
+            # Label
+            label = QLabel(f"{key}:")
+            label.setFixedWidth(100)
+            field_layout.addWidget(label)
+
+            # Editable Field
+            field = QLineEdit(str(value))
+            field.setObjectName(key)
+            field_layout.addWidget(field)
+
+            self.stats_layout.addLayout(field_layout)
+
+        # Add Save Button
+        save_button = QPushButton("Save Changes")
+        save_button.clicked.connect(lambda: self.save_item_changes(item_data))
+        self.stats_layout.addWidget(save_button)
+
+    def save_item_changes(self, item_data):
+        """Save changes made to the selected item's stats."""
+        for i in range(self.stats_layout.count()):
+            layout_item = self.stats_layout.itemAt(i)
+            if isinstance(layout_item, QHBoxLayout):
+                key_label = layout_item.itemAt(0).widget()
+                value_field = layout_item.itemAt(1).widget()
+
+                if key_label and value_field:
+                    key = key_label.text().replace(":", "").strip()
+                    if key in item_data:
+                        item_data[key] = value_field.text()
+
+        # Refresh table to reflect changes
+        self.populate_table()
 
     def switch_town(self, index):
         """Switch to the selected town's data."""
@@ -151,8 +353,6 @@ class ConfigEditor(QMainWindow):
             self.populate_table()  # Refresh the table with the new town's data
         except IndexError:
             QMessageBox.warning(self, "Error", "Invalid town selection.")
-
-
 
     def apply_dark_mode(self):
         """Apply a dark mode theme to the app."""
@@ -211,8 +411,6 @@ class ConfigEditor(QMainWindow):
             if item_id == search_id:
                 matching_rows.append(row)
 
-
-
         search_id = int(search_id)
         self.table.clearSelection()  # Clear any existing selections
 
@@ -231,30 +429,6 @@ class ConfigEditor(QMainWindow):
 
 
 
-
-    def toggle_mode(self):
-        """Toggle between config and save file views."""
-        if self.mode == "config":
-            self.mode = "save"
-            self.toggle_button.setText("Switch to Config View")
-        else:
-            self.mode = "config"
-            self.toggle_button.setText("Switch to Save File View")
-        self.populate_table()
-
-    def load_file(self):
-        """Open a file for editing/viewing."""
-        options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open File", "", "JSON Files (*.json)", options=options
-        )
-        if file_path:
-            self.current_file = file_path
-            with open(file_path, "r") as file:
-                self.save_data = json.load(file)  # Load the entire save file
-            self.config_items = self.save_data.get("items", []) if self.mode == "config" else []
-            self.save_items = self.save_data["maps"][0]["items"]  # Reference maps[0]["items"]
-            self.populate_table()
 
     def delete_selected_items(self):
         """Delete the selected items from the save file."""
@@ -286,54 +460,77 @@ class ConfigEditor(QMainWindow):
         QMessageBox.information(self, "Success", "Selected items deleted.")
 
     def load_file(self):
-        """Open a file for editing/viewing."""
+        """Load a save or config file."""
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open File", "", "JSON Files (*.json)", options=options
+            self, "Open File", "", "JSON Files (*.json);;All Files (*)", options=options
         )
-        if file_path:
-            self.current_file = file_path
+
+        if not file_path:  # User canceled the file dialog
+            return  # Exit the method gracefully
+
+        try:
             with open(file_path, "r") as file:
                 data = json.load(file)
 
-        if self.mode == "config":
-            if "items" in data:
-                self.config_items = data["items"]
-                self.save_items = []
-                self.populate_table()
-            else:
-                QMessageBox.warning(self, "Error", "Invalid configuration file format.")
-        else:
+            self.current_file = file_path  # Store the file path for saving later
+
+            # Check if it's a save file (contains "maps")
             if "maps" in data:
                 self.save_data = data
-                self.town_selector.clear()  # Clear existing items in the dropdown
-
-                # Populate the dropdown with town indices or descriptions
-                for i, town in enumerate(self.save_data["maps"]):
-                    town_name = f"Town {i + 1} (Level {town.get('level', 'Unknown')})"
-                    self.town_selector.addItem(town_name)
-
-                # Default to the first town
+                self.mode = "save"
+                self.populate_town_selector()
                 self.switch_town(0)
+                self.toggle_button.setText("Switch to Config View")
+
+                # Update player info label
+                player_info = data.get("playerInfo", {})
+                pid = player_info.get("pid", "Unknown PID")
+                name = player_info.get("name", "Unknown Name")
+                self.player_info_label.setText(f"PID: {pid} | Name: {name}")
+
+            elif "items" in data:
+                self.config_items = data["items"]
+                self.mode = "config"
+                self.populate_table()
+                self.toggle_button.setText("Switch to Save File View")
+
+                # Clear player info label (not relevant in config mode)
+                self.player_info_label.setText("No Save File Loaded")
+
             else:
-                QMessageBox.warning(self, "Error", "Invalid save file format.")
+                QMessageBox.warning(self, "Invalid File", "The selected file is not valid.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred while loading the file:\n{str(e)}")
+
+    def populate_town_selector(self):
+        """Populate the town selector with available towns from the save file."""
+        self.town_selector.clear()  # Clear existing towns
+        for i, town in enumerate(self.save_data.get("maps", [])):
+            town_name = f"Town {i + 1} (Level {town.get('level', 'Unknown')})"
+            self.town_selector.addItem(town_name)
 
     def save_file(self):
-        """Save the current data back to the file."""
+        """Save the current file based on the mode."""
         if not self.current_file:
-            QMessageBox.warning(self, "Error", "No file loaded.")
+            QMessageBox.warning(self, "Error", "No file loaded. Please load a file first.")
             return
 
-        # Debug: Inspect the structure before saving
-        print(f"Saving to {self.current_file}")
-        print(json.dumps(self.save_data, indent=4))  # Print the full structure
+        if self.mode == "config":
+            QMessageBox.information(self, "Save Disabled", "Saving is disabled in Config Viewer mode.")
+            return
 
         try:
-            with open(self.current_file, "w") as file:
-                json.dump(self.save_data, file, indent=4)
-            QMessageBox.information(self, "Success", "File saved successfully!")
+            if self.mode == "save":
+                # Save the save file
+                with open(self.current_file, "w") as file:
+                    json.dump(self.save_data, file, indent=4)
+
+                QMessageBox.information(self, "Success", "Save file saved successfully!")
+            else:
+                QMessageBox.warning(self, "Error", "Unknown mode. Cannot save the file.")
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save file: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to save the file:\n{str(e)}")
 
     def populate_table(self):
         """Populate the table with either config or save file data."""
@@ -410,7 +607,7 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     editor = ConfigEditor(
         config_path="config",
-        assets_path = "assets/buildingthumbs"
+        assets_path="assets/buildingthumbs"
 
     )
     editor.show()
