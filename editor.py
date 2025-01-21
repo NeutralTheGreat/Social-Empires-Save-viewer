@@ -5,7 +5,8 @@ import jsonpatch
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget, QPushButton, QLabel, QHBoxLayout, QFileDialog,
-    QMessageBox, QLineEdit, QComboBox, QSizePolicy, QSpinBox, QCheckBox
+    QMessageBox, QLineEdit, QComboBox, QSizePolicy, QSpinBox, QCheckBox,
+    QSplitter
 )
 from PyQt5.QtGui import QPixmap, QIcon
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -74,19 +75,62 @@ class ConfigEditor(QMainWindow):
         self.init_ui()
         self.apply_dark_mode()  # Apply dark mode theme
 
-    def load_cached_image(self, img_path):
-        """Load an image from cache or disk."""
-        if img_path not in self.image_cache:
+
+    def populate_add_items_list(self):
+        """Populate the right panel with units/buildings from the config, including 90x90 images."""
+        if not self.config_items:
+            QMessageBox.warning(self, "No Config Data", "No config file loaded. Please load a config file first.")
+            return
+
+        self.add_items_list.setRowCount(0)  # Clear the table
+        self.add_items_list.setColumnCount(3)  # Update column count to include images
+        self.add_items_list.setHorizontalHeaderLabels(["ID", "Name", "Image"])
+        self.add_items_list.setColumnWidth(0, 50)  # ID
+        self.add_items_list.setColumnWidth(1, 150)  # Name
+        self.add_items_list.setColumnWidth(2, 90)  # Image
+
+        for item in self.config_items:
+            row = self.add_items_list.rowCount()
+            self.add_items_list.insertRow(row)
+            self.add_items_list.setRowHeight(row, 90)  # Set row height for 90x90 images
+
+            # Add ID
+            self.add_items_list.setItem(row, 0, QTableWidgetItem(str(item.get("id", "N/A"))))
+
+            # Add Name
+            self.add_items_list.setItem(row, 1, QTableWidgetItem(item.get("name", "Unnamed")))
+
+            # Add Image
+            img_name = item.get("img_name", "placeholder")
+            img_path = os.path.join(self.assets_path, f"{img_name}.jpg")
+            image_label = QLabel()
+
             if os.path.exists(img_path):
-                pixmap = QPixmap(img_path).scaled(90, 90, Qt.KeepAspectRatio)
-                self.image_cache[img_path] = pixmap
+                pixmap = QPixmap(img_path)
+                if not pixmap.isNull():  # Check if pixmap is valid before scaling
+                    pixmap = pixmap.scaled(90, 90, Qt.KeepAspectRatio)  # Scale to 90x90
+                    image_label.setPixmap(pixmap)
             else:
+                # Use a placeholder pixmap for missing images
                 pixmap = QPixmap(90, 90)
-                pixmap.fill(Qt.gray)
-                self.image_cache[img_path] = pixmap
-        return self.image_cache[img_path]
+                pixmap.fill(Qt.gray)  # Fill with gray as a placeholder
+                image_label.setPixmap(pixmap)
+
+            image_label.setAlignment(Qt.AlignCenter)
+            self.add_items_list.setCellWidget(row, 2, image_label)
 
 
+    #def load_cached_image(self, img_path):
+       # """Load an image from cache or disk."""
+       #if img_path not in self.image_cache:
+       #    if os.path.exists(img_path):
+       #        pixmap = QPixmap(img_path).scaled(90, 90, Qt.KeepAspectRatio)
+       #        self.image_cache[img_path] = pixmap
+       #     else:
+       #         pixmap = QPixmap(90, 90)
+       #         pixmap.fill(Qt.gray)
+       #         self.image_cache[img_path] = pixmap
+       #return self.image_cache[img_path]
 
     def init_ui(self):
         """Initialize the UI layout."""
@@ -134,14 +178,12 @@ class ConfigEditor(QMainWindow):
 
         search_button = QPushButton("Find")
         search_button.clicked.connect(self.find_items_by_id)
-        self.search_bar.setFixedWidth(150)
         top_layout.addWidget(search_button)
 
         # Town Selector Dropdown
         self.town_selector = QComboBox()
         self.town_selector.currentIndexChanged.connect(self.switch_town)
         top_layout.addWidget(QLabel("Select Town:"))
-        self.search_bar.setFixedWidth(110)  # Set a fixed width (adjust as needed)
         top_layout.addWidget(self.town_selector)
 
         # Add Player Info Label
@@ -153,33 +195,32 @@ class ConfigEditor(QMainWindow):
         # Add Top Layout to Main Layout
         main_layout.addLayout(top_layout)
 
-        # Middle Section: Table and Stats Panel
-        middle_layout = QHBoxLayout()
+        # Middle Section: Use QSplitter for Resizing
+        splitter = QSplitter(Qt.Horizontal)
 
-        # Left Section: Table
-        left_layout = QVBoxLayout()
+        # Left Section: Main Table
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
 
-        # Table for Data Display
         self.table = QTableWidget()  # Initialize the table
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["ID", "Name/Details", "Position/Stats", "Image"])
+        #self.set_table_selection_mode()  # Dynamically set the selection mode
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.set_table_selection_mode()  # Dynamically set the selection mode
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)  # Disable editing
         self.table.itemSelectionChanged.connect(self.update_stats_panel)
-        left_layout.addWidget(self.table)  # Add the table to the layout
+        left_layout.addWidget(self.table)
 
-        # Add Left Layout to Middle Layout
-        middle_layout.addLayout(left_layout, 2)
+        splitter.addWidget(left_widget)  # Add the left section to the splitter
 
-        # Right Section: Stats Panel (Save Mode Add Feature)
-        right_layout = QVBoxLayout()
+        # Right Section: Stats and Add Items
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
 
-        # Add Button
         self.add_button = QPushButton("Add Selected Unit/Building")
         self.add_button.clicked.connect(self.add_item_to_save)
         right_layout.addWidget(self.add_button)
 
-        # Quantity Selector
         self.quantity_box = QSpinBox()
         self.quantity_box.setMinimum(1)  # Minimum value
         self.quantity_box.setValue(1)  # Default value
@@ -188,45 +229,78 @@ class ConfigEditor(QMainWindow):
 
         # List of Units/Buildings (from Config)
         self.add_items_list = QTableWidget()
-        self.add_items_list.setColumnCount(2)
-        self.add_items_list.setHorizontalHeaderLabels(["ID", "Name"])
+        self.add_items_list.setColumnCount(3)
+        self.add_items_list.setHorizontalHeaderLabels(["ID", "Name", "Image"])
+        self.add_items_list.setColumnWidth(0, 50)
+        self.add_items_list.setColumnWidth(1, 150)
+        self.add_items_list.setColumnWidth(2, 90)
+        # Set selection mode to allow only one item to be selected at a time
         self.add_items_list.setSelectionBehavior(QTableWidget.SelectRows)
         self.add_items_list.setSelectionMode(QTableWidget.SingleSelection)
-        self.add_items_list.setColumnWidth(0, 50)  # Adjust column width for ID
-        self.add_items_list.setColumnWidth(1, 150)  # Adjust column width for Name
-
-        # Add the table to the layout
+        # Disable editing
+        self.add_items_list.setEditTriggers(QTableWidget.NoEditTriggers)
+        # Connect the double-click event to add the item to the save file
+        self.add_items_list.itemDoubleClicked.connect(self.handle_item_double_click)
         right_layout.addWidget(self.add_items_list)
+
+
 
         # Stats Display Area
         self.stats_widget = QWidget()  # Main widget for stats
         self.stats_layout = QVBoxLayout(self.stats_widget)  # Layout for stats
         self.stats_widget.setLayout(self.stats_layout)
+        right_layout.addWidget(self.stats_widget)
 
-        right_layout.addWidget(self.stats_widget)  # Add to the right layout
+        splitter.addWidget(right_widget)  # Add the right section to the splitter
 
-        # Add Right Layout to Middle Layout
-        middle_layout.addLayout(right_layout, 1)
+        # Adjust proportions: 2:1 for left:right
+        splitter.setStretchFactor(0, 2)  # Left panel gets more space
+        splitter.setStretchFactor(1, 1)  # Right panel gets less space
 
-        # Add Middle Layout to Main Layout
-        main_layout.addLayout(middle_layout)
+        # Add Splitter to Main Layout
+        main_layout.addWidget(splitter)
 
         # Finalize Layout
         container = QWidget()
         container.setLayout(main_layout)
         self.setCentralWidget(container)
 
-        # In init_ui()
+        # Apply Patches Checkbox
         self.apply_patches_checkbox = QCheckBox("Apply Patches on Load")
         self.apply_patches_checkbox.setChecked(True)  # Default to apply patches
         top_layout.addWidget(self.apply_patches_checkbox)
 
-    def update_table(mode):
-        """Refresh the table only if the mode or data has changed."""
-        if mode == "save":
-            self.populate_save_view()
-        elif mode == "config":
-            self.populate_table()
+    def set_table_selection_mode(self):
+        """Set the table's selection mode based on the current mode."""
+        if self.mode == "config":
+            print("Switching to Config Mode: Single selection")
+            self.table.setSelectionMode(QTableWidget.SingleSelection)
+        elif self.mode == "save":
+            print("Switching to Save Mode: Multi-selection")
+            self.table.setSelectionMode(QTableWidget.MultiSelection)
+        else:
+            print(f"Unknown mode: {self.mode}")
+
+    def handle_item_double_click(self, item):
+        """Handle double-click on an item in the add_items_list."""
+        selected_row = item.row()
+
+        # Retrieve the item data from the selected row
+        item_id = self.add_items_list.item(selected_row, 0).text()
+        item_name = self.add_items_list.item(selected_row, 1).text()
+        item_quantity = self.quantity_box.value()  # Get quantity from the spin box
+
+        # Perform the logic to add the item to the save file
+        self.add_item_to_save()
+
+
+
+    #def update_table(mode):
+       # """Refresh the table only if the mode or data has changed."""
+       #if mode == "save":
+       #     self.populate_save_view()
+       # elif mode == "config":
+       #     self.populate_table()
 
     class ImageLoaderThread(QThread):
         image_loaded = pyqtSignal(int, QPixmap)  # Signal to update UI
@@ -244,90 +318,61 @@ class ConfigEditor(QMainWindow):
                 pixmap.fill(Qt.gray)
             self.image_loaded.emit(self.row, pixmap)
 
-    def load_image_in_thread(self, row, img_path):
-        """Load an image in a separate thread."""
-        thread = ImageLoaderThread(row, img_path)
-        thread.image_loaded.connect(lambda r, pix: self.update_image_in_table(r, pix))
-        thread.start()
+    #def load_image_in_thread(self, row, img_path):
+       # """Load an image in a separate thread."""
+       # thread = ImageLoaderThread(row, img_path)
+       # thread.image_loaded.connect(lambda r, pix: self.update_image_in_table(r, pix))
+       # thread.start()
 
-    def update_image_in_table(self, row, pixmap):
-        """Update the table with the loaded image."""
-        image_label = QLabel()
-        image_label.setPixmap(pixmap)
-        self.table.setCellWidget(row, 3, image_label)  # Example column index for image
+    #def update_image_in_table(self, row, pixmap):
+       # """Update the table with the loaded image."""
+       # image_label = QLabel()
+       # image_label.setPixmap(pixmap)
+       # self.table.setCellWidget(row, 3, image_label)  # Example column index for image
 
-    def load_image_lazy(row, img_path):
-        """Load an image lazily when a row becomes visible."""
-        image_label = QLabel()
-        if os.path.exists(img_path):
-            pixmap = QPixmap(img_path).scaled(90, 90, Qt.KeepAspectRatio)
-            image_label.setPixmap(pixmap)
-        else:
-            pixmap = QPixmap(90, 90)
-            pixmap.fill(Qt.gray)  # Placeholder for missing images
-            image_label.setPixmap(pixmap)
-        image_label.setAlignment(Qt.AlignCenter)
-        self.table.setCellWidget(row, 3, image_label)  # Example column index for image
-
-    def set_table_selection_mode(self):
-        """Set the table's selection mode based on the current mode."""
-        if self.mode == "config":
-            self.table.setSelectionMode(QTableWidget.SingleSelection)  # Single select for stats
-        elif self.mode == "save":
-            self.table.setSelectionMode(QTableWidget.MultiSelection)  # Multi-select for save mode
-
-    def populate_add_items_list(self):
-        """Populate the right panel with units/buildings from the config, including 90x90 images."""
-        if not self.config_items:
-            QMessageBox.warning(self, "No Config Data", "No config file loaded. Please load a config file first.")
-            return
-
-        self.add_items_list.setRowCount(0)  # Clear the table
-        self.add_items_list.setColumnCount(3)  # Update column count to include images
-        self.add_items_list.setHorizontalHeaderLabels(["ID", "Name", "Image"])
-        self.add_items_list.setColumnWidth(0, 50)  # ID
-        self.add_items_list.setColumnWidth(1, 150)  # Name
-        self.add_items_list.setColumnWidth(2, 90)  # Image
-
-        for item in self.config_items:
-            row = self.add_items_list.rowCount()
-            self.add_items_list.insertRow(row)
-            self.add_items_list.setRowHeight(row, 90)  # Set row height for 90x90 images
-
-            # Add ID
-            self.add_items_list.setItem(row, 0, QTableWidgetItem(str(item.get("id", "N/A"))))
-
-            # Add Name
-            self.add_items_list.setItem(row, 1, QTableWidgetItem(item.get("name", "Unnamed")))
-
-            # Add Image
-            img_name = item.get("img_name", "placeholder")
-            img_path = os.path.join(self.assets_path, f"{img_name}.jpg")
-            #print(f"Image Path: {img_path}, Exists: {os.path.exists(img_path)}")  # Debug print for paths
-            image_label = QLabel()
-
-            if os.path.exists(img_path):
-                pixmap = QPixmap(img_path)
-                if not pixmap.isNull():  # Check if pixmap is valid before scaling
-                    pixmap = pixmap.scaled(90, 90, Qt.KeepAspectRatio)  # Scale to 90x90
-                    image_label.setPixmap(pixmap)
-            else:
-                # Use a placeholder pixmap for missing images
-                pixmap = QPixmap(90, 90)
-                pixmap.fill(Qt.gray)  # Fill with gray as a placeholder
-                image_label.setPixmap(pixmap)
-
-            image_label.setAlignment(Qt.AlignCenter)
-            self.add_items_list.setCellWidget(row, 2, image_label)
+    #def load_image_lazy(row, img_path):
+        #"""Load an image lazily when a row becomes visible."""
+        #image_label = QLabel()
+        #if os.path.exists(img_path):
+        #    pixmap = QPixmap(img_path).scaled(90, 90, Qt.KeepAspectRatio)
+        #    image_label.setPixmap(pixmap)
+        #else:
+        #    pixmap = QPixmap(90, 90)
+        #    pixmap.fill(Qt.gray)  # Placeholder for missing images
+        #    image_label.setPixmap(pixmap)
+        #image_label.setAlignment(Qt.AlignCenter)
+        #self.table.setCellWidget(row, 3, image_label)  # Example column index for image
 
     def toggle_mode(self):
-        """Switch between config and save file views."""
-        self.mode = "save" if self.mode == "config" else "config"
-        self.set_table_selection_mode()
-        self.populate_table()
+        """Switch between Config and Save modes."""
+        if self.mode == "config":
+            self.mode = "save"
+            self.setWindowTitle("Save Mode")
 
-        if self.mode == "save":
-            self.populate_add_items_list()  # Populate the right panel
+            # Show Save Mode UI Elements
+            self.add_button.show()
+            self.quantity_box.show()
+            self.add_items_list.show()
+
+            # Only populate if config_items are loaded
+            if self.config_items:
+                self.populate_add_items_list()
+            else:
+                QMessageBox.warning(self, "No Config Data", "Please load a config file first.")
+        else:
+            self.mode = "config"
+            self.setWindowTitle("Config Mode")
+
+            # Hide Save Mode UI Elements
+            self.add_button.hide()
+            self.quantity_box.hide()
+            self.add_items_list.hide()
+
+        # Always refresh the main table's selection mode when toggling modes
+        self.set_table_selection_mode()
+
+        # Refresh the main table contents
+        self.populate_table()
 
     def add_item_to_save(self):
         """Add the selected unit/building to the save file."""
@@ -375,11 +420,7 @@ class ConfigEditor(QMainWindow):
         self.clear_stats_panel()  # Clear before populating
         self.populate_stats_form(item_data)
 
-    def update_stats_panel(self):
-        """Update the right panel with stats of the most recently selected item."""
-        if self.mode == "save":
-            self.clear_stats_panel()  # Clear the panel if in save file view
-            return
+
 
         selected_indexes = self.table.selectionModel().selectedRows()
         if not selected_indexes:
@@ -436,26 +477,23 @@ class ConfigEditor(QMainWindow):
 
             self.stats_layout.addLayout(field_layout)
 
-        # Add Save Button
-        save_button = QPushButton("Save Changes")
-        save_button.clicked.connect(lambda: self.save_item_changes(item_data))
-        self.stats_layout.addWidget(save_button)
 
-    def save_item_changes(self, item_data):
-        """Save changes made to the selected item's stats."""
-        for i in range(self.stats_layout.count()):
-            layout_item = self.stats_layout.itemAt(i)
-            if isinstance(layout_item, QHBoxLayout):
-                key_label = layout_item.itemAt(0).widget()
-                value_field = layout_item.itemAt(1).widget()
 
-                if key_label and value_field:
-                    key = key_label.text().replace(":", "").strip()
-                    if key in item_data:
-                        item_data[key] = value_field.text()
+    #def save_item_changes(self, item_data):
+        #"""Save changes made to the selected item's stats."""
+        #for i in range(self.stats_layout.count()):
+        #    layout_item = self.stats_layout.itemAt(i)
+        #    if isinstance(layout_item, QHBoxLayout):
+        #        key_label = layout_item.itemAt(0).widget()
+        #        value_field = layout_item.itemAt(1).widget()
+
+         #       if key_label and value_field:
+         #           key = key_label.text().replace(":", "").strip()
+         #           if key in item_data:
+         #               item_data[key] = value_field.text()
 
         # Refresh table to reflect changes
-        self.populate_table()
+        #self.populate_table()
 
     def switch_town(self, index):
         """Switch to the selected town's data."""
@@ -618,12 +656,12 @@ class ConfigEditor(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save the file:\n{str(e)}")
 
-    def closeEvent(self, event):
-        """Ensure threads are stopped when closing the application."""
-        if hasattr(self, 'loader_thread') and self.loader_thread.isRunning():
-            self.loader_thread.quit()
-            self.loader_thread.wait()
-        super().closeEvent(event)
+    #def closeEvent(self, event):
+        # """Ensure threads are stopped when closing the application."""
+        #if hasattr(self, 'loader_thread') and self.loader_thread.isRunning():
+        #    self.loader_thread.quit()
+        #     self.loader_thread.wait()
+        # super().closeEvent(event)
 
     def populate_town_selector(self):
         """Populate the town selector with available towns from the save file."""
